@@ -1,0 +1,1 @@
+# Licensing module for product activation and validation
