@@ -1,0 +1,34 @@
+version: '3.8'
+
+services:
+  cbt-api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: lls_cbt_serverless_api
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      - PORT=8000
+      - ENVIRONMENT=production
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - LICENSE_PRIVATE_KEY=${LICENSE_PRIVATE_KEY}
+      - DATABASE_URL=sqlite:////app/data/cbt_backend.db
+      #- LICENSE_PUBLIC_KEY=${LICENSE_PUBLIC_KEY}
+    env_file:
+      - .env
+    volumes:
+      # Mount data folder and db so data persists across restarts
+      - ./data:/app/data
+      - cbt_db_data:/app/storage
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+volumes:
+  cbt_db_data:
+    driver: local
