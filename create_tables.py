@@ -1,10 +1,10 @@
 
 
-from app.database.database import engine, Base
+from database.database import engine, Base
 
 # IMPORTANT:
 # Import models so SQLAlchemy knows about all tables.
-from app.database.models import (
+from database.models import (
     Subject,
     Question,
     Option,
