@@ -105,7 +105,7 @@ def init_database() -> None:
     """
     # Import models here so SQLAlchemy knows about them before
     # create_all() is called.
-    from app.database import models  # noqa: F401
+    from database import models  # noqa: F401
 
     # 1. Create all tables defined in models.py
     Base.metadata.create_all(
@@ -292,8 +292,8 @@ def init_database() -> None:
     # 3. Seed default settings and initial admin account on fresh installation
     try:
         from sqlalchemy import select
-        from app.services.settings_service import SettingsService
-        from app.services.auth_service import AuthService
+        from services.settings_service import SettingsService
+        from services.auth_service import AuthService
 
         with SessionLocal() as db:
             # Ensure default settings row exists

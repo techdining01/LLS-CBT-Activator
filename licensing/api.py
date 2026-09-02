@@ -8,9 +8,9 @@ from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
-from app.database.database import get_db
-from app.database.models import ProductLicense, LicenseActivation
-from app.services.licensing.crypto import LicenseCrypto
+from database.database import get_db
+from database.models import ProductLicense, LicenseActivation
+from licensing.crypto import LicenseCrypto
 
 
 router = APIRouter(prefix="/api/license", tags=["licensing"])

@@ -1,4 +1,4 @@
-from app.database.database import (
+from database.database import (
     Base,
     DATABASE_PATH,
     DATABASE_URL,

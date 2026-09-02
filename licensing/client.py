@@ -5,8 +5,8 @@ from typing import Dict, Any, Optional
 import requests
 from datetime import datetime
 
-from app.services.licensing.machine_fingerprint import MachineFingerprint
-from app.services.licensing.crypto import LicenseCrypto
+from licensing.machine_fingerprint import MachineFingerprint
+from licensing.crypto import LicenseCrypto
 from dotenv import load_dotenv
 
 # Load the environment variables from the .env file
