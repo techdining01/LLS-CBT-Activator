@@ -237,7 +237,7 @@ EwIDAQAB
             "remaining_credits": local_license.get("remaining_credits", 0)
         }
     
-    
+    #
     def deactivate_license(self) -> Dict[str, Any]:
         """
         Deactivate the current license.
