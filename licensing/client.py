@@ -1,4 +1,4 @@
-import json
+﻿import json
 import os
 from pathlib import Path
 from typing import Dict, Any, Optional
@@ -11,13 +11,13 @@ from dotenv import load_dotenv
 
 # Load the environment variables from the .env file
 load_dotenv()
-load_dotenv(Path(__file__).resolve().parent.parent.parent.parent / ".env")
+load_dotenv(Path(__file__).resolve().parent.parent.parent / ".env")
 
 
 class LicenseClient:
     """Client-side license validation and management."""
     
-    def __init__(self, license_server_url: str = "http://127.0.0.1:8000"):
+    def __init__(self, license_server_url: str = "https://lls-cbt-activator.onrender.com"):
         """
         Initialize the license client.
         
@@ -25,7 +25,7 @@ class LicenseClient:
             license_server_url: URL of the license activation server
         """
         self.license_server_url = license_server_url
-        self.license_file_path = Path.home() / ".mock_cbt_license.json"
+        self.license_file_path = Path.home() / ".lls_cbt_license.json"
         self.public_key_pem = self._load_public_key()
         self.crypto = LicenseCrypto(public_key_pem=self.public_key_pem)
         self.machine_fingerprint = MachineFingerprint.get_machine_id()
@@ -47,7 +47,7 @@ class LicenseClient:
             return key_file.read_text()
             
         # Try to load from project root
-        root_key_file = Path(__file__).resolve().parent.parent.parent.parent / "license_public_key.pem"
+        root_key_file = Path(__file__).resolve().parent.parent.parent / "license_public_key.pem"
         if root_key_file.exists():
             return root_key_file.read_text()
         
@@ -66,19 +66,26 @@ EwIDAQAB
         return embedded_key
     
     def activate_license(self, product_key: str, user_email: str = "", user_name: str = "") -> Dict[str, Any]:
-        """
-        Activate a license online.
-        
-        Args:
-            product_key: The product key to activate
-            user_email: User email for support and tracking
-            user_name: User name for support
-            
-        Returns:
-            Dictionary with activation result
-        """
+        """Activate a license. Tries online first; falls back to offline (RSA-only) if unreachable."""
+        # Normalise key — verify_product_key handles padding internally
+        product_key = product_key.strip().replace("-", "").replace(" ", "").replace("\r", "").replace("\n", "")
+
+        # Always verify the RSA signature locally first — works with no internet
         try:
-            # Prepare activation request
+            license_data = self.crypto.verify_product_key(product_key)
+        except ValueError as e:
+            return {"success": False, "message": str(e)}
+
+        # Check key expiry from the embedded license data
+        try:
+            key_expiry = datetime.fromisoformat(license_data.get("expiry", ""))
+            if datetime.now() > key_expiry:
+                return {"success": False, "message": "This product key has expired."}
+        except Exception:
+            pass
+
+        # Try online activation
+        try:
             payload = {
                 "product_key": product_key,
                 "machine_fingerprint": self.machine_fingerprint,
@@ -89,170 +96,147 @@ EwIDAQAB
                     "timestamp": datetime.now().isoformat()
                 }
             }
-            
-            # Call activation API
             response = requests.post(
                 f"{self.license_server_url}/api/license/activate",
                 json=payload,
-                timeout=30
+                timeout=15
             )
-            
             if response.status_code == 200:
                 result = response.json()
-                
-                # Save license locally
                 self._save_license_locally(
                     product_key=product_key,
                     activation_id=result["activation_id"],
                     license_data=result["license_data"],
                     expiry_date=result["expiry_date"],
-                    user_email=payload.get("user_email", ""),
-                    user_name=payload.get("user_name", "")
+                    user_email=user_email,
+                    user_name=user_name,
                 )
-                
                 return {
                     "success": True,
                     "message": result["message"],
                     "remaining_credits": result["remaining_credits"],
-                    "expiry_date": result["expiry_date"]
+                    "expiry_date": result["expiry_date"],
                 }
             else:
                 error_detail = response.json().get("detail", "Unknown error")
-                return {
-                    "success": False,
-                    "message": f"Activation failed: {error_detail}"
-                }
-                
-        except requests.RequestException as e:
+                return {"success": False, "message": f"Activation failed: {error_detail}"}
+
+        except requests.RequestException:
+            # Server unreachable — activate offline using the verified RSA key data
+            expiry_date = license_data.get("expiry", (datetime.now().isoformat()))
+            self._save_license_locally(
+                product_key=product_key,
+                activation_id=0,          # 0 = offline activation, no server record
+                license_data=license_data,
+                expiry_date=expiry_date,
+                user_email=user_email,
+                user_name=user_name,
+            )
             return {
-                "success": False,
-                "message": f"Network error during activation: {str(e)}"
+                "success": True,
+                "message": "License activated offline. Connect to the internet within 120 days to sync.",
+                "remaining_credits": license_data.get("credits", 0),
+                "expiry_date": expiry_date,
             }
+
         except Exception as e:
-            return {
-                "success": False,
-                "message": f"Activation error: {str(e)}"
-            }
+            return {"success": False, "message": f"Activation error: {str(e)}"}
     
     def validate_license(self) -> Dict[str, Any]:
-        """
-        Validate the current license.
-        
-        Returns:
-            Dictionary with validation result
-        """
+        """Validate the current license. Online when possible, offline otherwise."""
+        local_license = self._load_local_license()
+        if not local_license:
+            return {"success": False, "message": "No license found. Please activate your product."}
+
+        # Always verify RSA signature locally — this works with no internet
         try:
-            # Load local license
-            local_license = self._load_local_license()
-            if not local_license:
-                return {
-                    "success": False,
-                    "message": "No license found. Please activate your product."
-                }
-            
-            # Verify product key signature locally first
-            try:
-                license_data = self.crypto.verify_product_key(local_license["product_key"])
-            except ValueError as e:
-                return {
-                    "success": False,
-                    "message": f"Invalid product key: {str(e)}"
-                }
-            
-            # Check expiry locally
+            license_data = self.crypto.verify_product_key(local_license["product_key"])
+        except ValueError as e:
+            return {"success": False, "message": str(e)}
+
+        # Check expiry from the saved file
+        try:
             expiry_date = datetime.fromisoformat(local_license["expiry_date"])
             if datetime.now() > expiry_date:
-                return {
-                    "success": False,
-                    "message": "License has expired"
-                }
-            
-            # Validate online with server
+                return {"success": False, "message": "License has expired."}
+        except Exception:
+            pass
+
+        # Offline-only activation (activation_id == 0) skips server validation entirely
+        if local_license.get("activation_id", 0) == 0:
+            return self._validate_offline(local_license, license_data)
+
+        # Try online validation
+        try:
             payload = {
                 "product_key": local_license["product_key"],
                 "machine_fingerprint": self.machine_fingerprint,
-                "activation_id": local_license["activation_id"]
+                "activation_id": local_license["activation_id"],
             }
-            
             response = requests.post(
                 f"{self.license_server_url}/api/license/validate",
                 json=payload,
-                timeout=30
+                timeout=10,
             )
-            
             if response.status_code == 200:
                 result = response.json()
                 if result["is_valid"]:
+                    # Refresh last_validated timestamp on successful online check
+                    local_license["last_validated"] = datetime.now().isoformat()
+                    self.license_file_path.write_text(json.dumps(local_license, indent=2))
                     return {
                         "success": True,
                         "message": "License is valid",
                         "license_data": result["license_data"],
-                        "remaining_credits": result["remaining_credits"]
+                        "remaining_credits": result["remaining_credits"],
                     }
-                else:
-                    return {
-                        "success": False,
-                        "message": result["message"]
-                    }
-            else:
-                # If server is unreachable, use offline validation
-                return self._validate_offline(local_license, license_data)
-                
-        except Exception as e:
-            return {
-                "success": False,
-                "message": f"Validation error: {str(e)}"
-            }
-    
+                return {"success": False, "message": result["message"]}
+            # Non-200 from server → fall back to offline
+            return self._validate_offline(local_license, license_data)
+
+        except requests.RequestException:
+            # No internet → fall back to offline
+            return self._validate_offline(local_license, license_data)
+            
     def _validate_offline(self, local_license: Dict[str, Any], license_data: Dict[str, Any]) -> Dict[str, Any]:
         """
         Perform offline license validation when server is unreachable.
-        
-        Args:
-            local_license: Local license data
-            license_data: Decoded license data from product key
-            
-        Returns:
-            Dictionary with validation result
+        The RSA signature was already verified locally before calling this.
+        Allows up to 120 days offline after last successful online validation.
         """
-        # Note: Offline validation has limitations for time manipulation protection
-        # The server-side validation is the authoritative source
-        
-        # Check expiry using embedded expiry date from product key (not local system time)
         expiry_date = datetime.fromisoformat(local_license["expiry_date"])
-        
-        # Basic time manipulation check: if current system time is before activation time
-        # that's suspicious (clock moved backwards)
-        last_validated = datetime.fromisoformat(local_license.get("last_validated", "2000-01-01"))
-        if datetime.now() < last_validated:
+        last_validated = datetime.fromisoformat(local_license.get("last_validated", "2020-01-01T00:00:00"))
+        now = datetime.now()
+
+        # Basic clock sanity check
+        if now < last_validated:
             return {
                 "success": False,
-                "message": "System time appears to be incorrect. Please check your clock."
+                "message": "System time appears incorrect. Please check your clock."
             }
-        
-        # Check if license has expired
-        if datetime.now() > expiry_date:
+
+        # Check expiry
+        if now > expiry_date:
             return {
                 "success": False,
                 "message": "License has expired"
             }
-        
-        # Check if last validation was recent (within 7 days)
-        days_since_validation = (datetime.now() - last_validated).days
-        
-        if days_since_validation > 7:
+
+        # Allow up to 120 days offline
+        days_offline = (now - last_validated).days
+        if days_offline > 120:
             return {
                 "success": False,
-                "message": "License requires online validation. Please connect to internet."
+                "message": "License requires online validation (120-day offline limit reached). Please connect to the internet."
             }
-        
-        # Offline validation passed
+
         return {
             "success": True,
             "message": "License is valid (offline mode)",
             "license_data": license_data,
             "remaining_credits": local_license.get("remaining_credits", 0)
         }
+    
     
     def deactivate_license(self) -> Dict[str, Any]:
         """
@@ -278,7 +262,7 @@ EwIDAQAB
             response = requests.post(
                 f"{self.license_server_url}/api/license/deactivate",
                 json=payload,
-                timeout=30
+                timeout=45
             )
             
             if response.status_code == 200:

@@ -120,10 +120,17 @@ class LicenseCrypto:
             raise ValueError("Public key required for verification")
         
         try:
-            # Remove formatting, whitespace, and newlines
-            raw_key = product_key.strip().replace("-", "").replace(" ", "").replace("\r", "").replace("\n", "")
-            
-            # Add missing base64 padding if needed
+            # Remove formatting, whitespace, and newlines; strip existing padding
+            raw_key = (
+                product_key.strip()
+                .replace("-", "")
+                .replace(" ", "")
+                .replace("\r", "")
+                .replace("\n", "")
+                .rstrip("=")   # strip any existing padding before re-adding
+            )
+
+            # Re-add correct base64 padding
             missing_padding = len(raw_key) % 4
             if missing_padding:
                 raw_key += "=" * (4 - missing_padding)
@@ -151,8 +158,10 @@ class LicenseCrypto:
             license_data = json.loads(data_bytes.decode("utf-8"))
             return license_data
             
+        except ValueError:
+            raise   # re-raise ValueError as-is (already has a good message)
         except Exception as e:
-            raise ValueError(f"Invalid product key: {str(e)}")
+            raise ValueError(f"Malformed or tampered product key: {str(e) or type(e).__name__}")
     
     @staticmethod
     def _format_product_key(key: str) -> str:
