@@ -51,4 +51,4 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=5s --retries=3 \
     CMD curl -f http://localhost:${PORT}/ || exit 1
 
 # Start the server (dynamically binds to $PORT supplied by serverless hosts like Cloud Run/Render)
-CMD ["sh", "-c", "uvicorn app.ai_tutor.main:app --host 0.0.0.0 --port ${PORT}"]
+CMD ["sh", "-c", "uvicorn ai_tutor.main:app --host 0.0.0.0 --port ${PORT}"]
